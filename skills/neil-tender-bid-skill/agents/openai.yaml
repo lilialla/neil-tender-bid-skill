@@ -1,0 +1,4 @@
+interface:
+  display_name: "招投标编制与核对"
+  short_description: "完整采购拆标、九列要求追溯、分章响应与局部返工、文件装配核对"
+  default_prompt: "请使用 $neil-tender-bid-skill 读取本项目采购来源，先完成要求总账并列出需要我冻结的实质事项。"

@@ -1,0 +1,120 @@
+# 两章生成与局部变更
+
+`scripts/chapters.py` 是可直接导入的标准库模块。它负责选择有限输入、确定性模板替换、引用变更定位和结构化检查；采购理解、证据证明力、技术方案充分性及静态模板中的实质承诺仍须复核。没有外部请求、OCR 或自动提交。
+
+## 一份章节清单
+
+继续使用九列要求 CSV；不要把材料、人工决定、签章或递交状态塞入该 CSV。JSON 章节清单最少包含 `shared`、`materials`、`chapters`、`global_constraints`。以下均为合成示例：
+
+```json
+{
+  "shared": {
+    "lawyer": {"value": "合成人员甲", "status": "confirmed", "source": "合成选人决定"},
+    "response_hours": {
+      "value": "2小时", "status": "confirmed", "source": "合成时限决定",
+      "kind": "commitment", "approval": {"by": "测试负责人", "decision": "approve"}
+    }
+  },
+  "materials": {
+    "proof-a": {
+      "path": "synthetic-proof.pdf", "sha256": "填写实际SHA256",
+      "pages": [1, 2], "status": "confirmed", "person": "合成人员甲"
+    }
+  },
+  "chapters": [
+    {
+      "id": "team", "path": "商务/团队", "output": "team.md",
+      "requirement_ids": ["R1"], "shared_keys": ["lawyer"], "material_ids": ["proof-a"],
+      "template": "拟派人员：{{lawyer}}。",
+      "material_checks": [{"material_id": "proof-a", "requirement_id": "R1", "person_key": "lawyer"}]
+    },
+    {
+      "id": "service", "path": "技术/服务安排", "output": "service.md",
+      "requirement_ids": ["R2"], "shared_keys": ["lawyer", "response_hours"], "material_ids": [],
+      "template": "{{lawyer}}负责服务响应，时限为{{response_hours}}。"
+    }
+  ],
+  "global_constraints": [
+    {"scope": ["service"], "requirement_ids": ["R2"], "text": "保留原文的完整限制条件。"}
+  ]
+}
+```
+
+示例 SHA256 是说明占位符，运行前须替换为实际材料哈希；校验器不会将它当作有效来源。
+
+- `status: confirmed` 与非空 `source` 表示当前采用且有依据的确定值；其他状态、空值或无来源的值保持待核。人员决定和证据实际上是否取得分别记录。
+- `kind: commitment` 还需 `approval.by` 及 `approval.decision: approve`；批准继续制作不等于批准具体承诺。未批准承诺只生成 `【】`，问题写入内部 `gaps`。
+- 报价使用 `kind: quote`、明确 `round`、数值 `value`，可补 `currency`（默认 `CNY`）和 `quote_group`（默认 `total`）。相同轮次、同组报价金额或币种冲突会报错；不同轮次可以并存。当前章节仍须明确引用采用值。同一轮已被替代的候选用非 `confirmed` 状态保留，不能同时标成当前采用值。
+- `pages` 是实际采用的原材料页号列表。材料 `status: confirmed` 应来自已完成的原件核对；本模块检查引用与元数据，不重新打开或鉴定原文件。G1 及装配时须另验文件、实际页码和哈希。
+- `material_checks` 可用 `subject_key`、`person_key` 指向已确认共用值，核对材料的 `subject`、`person`。`period_start_key`、`period_end_key` 指向 `YYYY-MM-DD` 日期，核对材料的证明期间是否覆盖所需期间。不能用合同标题相似代替这些核对；有其他证据条件时仍需原页审查。
+- `global_constraints.scope` 使用章节 ID 列表，确实全局适用时用 `["*"]`；适用原文由 `requirement_ids` 一起完整带入。错误章节 ID 或要求引用会明确报错，不能默认该约束没有影响。
+- 共同约束涉及批准时限、人员或材料时，用该约束的 `shared_keys`、`material_ids` 明确引用；`text` 中的 `{{key}}` 也会带入对应共用值。这样修改时限会使受该约束的全部章节失效。自由文字中的隐含依赖仍须由操作者识别，脚本不猜测。
+- 章节 `decisions` 可记录 `[{"by":"负责人","action":"continue","reason":"先生成工作稿"}]`。检查问题保留该决定；不会把问题改为通过，也不会把未取得证明写成已取得。
+
+## 模块接口
+
+命令行与同一份数据对应，输出路径须为新文件：
+
+```bash
+python3 "<skill-root>/scripts/tender.py" packet --checklist "<章节清单JSON>" --requirements "<九列总账CSV>" --chapter team --out "<本章输入JSON>"
+python3 "<skill-root>/scripts/tender.py" render --packet "<本章输入JSON>" --out "<本章结果JSON>"
+python3 "<skill-root>/scripts/tender.py" chapters-check --checklist "<章节清单JSON>" --requirements "<九列总账CSV>" --results "<按章节ID索引的结果JSON>"
+python3 "<skill-root>/scripts/tender.py" impact --before-checklist "<原清单>" --after-checklist "<新清单>" --before-requirements "<原总账>" --after-requirements "<新总账>"
+```
+
+`render` 结果的 `content` 是正文，可另存为本章 Markdown 再交现有文档工具；`gaps` 等字段只留内部。模型自由起草使用同一 packet 而不必调用模板渲染。
+
+| 函数 | 输出与用途 |
+|---|---|
+| `read_requirements(csv_path)` | UTF-8/BOM CSV 转列表；表头必须按规划的固定九列顺序，ID 唯一，必需值非空，要求状态使用规划中的四种中文状态。 |
+| `prepare_packet(checklist, requirements, chapter_id)` | 深复制本章及适用全局规则的完整要求、来源、必要材料和共用值。未知引用抛出 `ValueError`。 |
+| `render_chapter(packet)` | 返回 `content`、`requirement_ids`、内部 `gaps`、`used_values`、`dependencies`、`input_fingerprint`；正文只作 `{{key}}` 替换，不调用模型。 |
+| `impact(before_checklist, after_checklist, before_requirements, after_requirements)` | 返回 `affected`、`unchanged`、`uncertain`、`issues`；比较实际选中输入，未知引用放入待核范围。 |
+| `validate_chapters(checklist, requirements, results)` | `results` 是按章节 ID 索引的结果字典；返回问题列表，不作递交放行决定。 |
+| `score_performance(candidates, rule)` | 根据已确认的按项计分规则，按独立 ID 去重，计算有材料支持的预估分及默认一项备选。 |
+
+`prepare_packet` 也会识别模板直接引用及材料核对所需的共用字段，避免人工漏写依赖导致错误声称无影响。它不会带入其他章节正文或无关材料。输入指纹用于识别使用旧输入的结果，不证明来源或人工批准的真实性。
+
+模板首次采用时，先复核其中静态事实和承诺；变化后复核变化部分。将重要事实、报价、时限及实质承诺写成有来源的共用字段，避免把这些内容硬编码在模板中。任意长正文可由 Codex 使用 packet 另行生成：章节不设 `template`，保留相同结果字段，`validate_chapters` 会返回语义复核待核项，不把任意文本当作已验证模板。不得用已有的 `input_fingerprint` 掩盖真实输入变化。
+
+若检查列表为空，只表示已提供结构化条件下没有发现本模块覆盖的问题；它不等于 G1—G6 全部通过，更不证明证明附件已装配、签章或递交。正文缺口、未映射要求、待澄清要求、错人错期、过期结果和同轮报价冲突均需如实进入现有清单。
+
+只生成 packet 并不自动建立独立模型上下文；确需隔离时，单独调用只提供 packet 的执行上下文。继承整段任务历史的子任务不能称为隔离测试。
+
+## 计分输入
+
+```json
+{
+  "rule": {
+    "status": "confirmed", "source": "合成评分原文R3",
+    "points_per_item": "1.5", "max_points": "4",
+    "subject_type": "person", "subject_id": "person-a",
+    "start_date": "2024-01-01", "end_date": "2026-09-01"
+  },
+  "candidates": [
+    {
+      "id": "contract-1", "subject_type": "person", "subject_id": "person-a",
+      "completed_on": "2025-01-01", "status": "confirmed",
+      "source": "合成合同关键页", "page_count": 2
+    }
+  ]
+}
+```
+
+`subject_type` 限于 `firm` 或 `person`，且 `subject_id` 必须匹配。独立 ID 由原件核对确定；同一合同的不同扫描件或副本使用同一 ID，重复展示不增加计分。同一 ID 的主体、期间、类别或确认状态互相矛盾时，整项保持待核，不任意取第一份计分。
+
+当前公式仅处理每项固定分及该项上限：`ceil(max_points / points_per_item)` 是满分最低数量，默认另准备一项合格备选。合格性是既有人工／原页判断的输入；程序进一步核对结构化主体、`service_type`（规则规定时）和完成日期窗口，不能推断合同性质或人员是否实际参与。
+
+`start_date` / `end_date` 在此函数中核对的是 `completed_on`，含首尾日。规则按签订日、服务期间或其他口径计分时，先采用相应原文口径核对，不把完成日期模型用于不同规则。复杂公式、主观分和未知竞争报价不由本函数猜测。
+
+规则可补 `max_count` 和 `page_limit`。按输入候选顺序选取，遇到数量、页面不明或页数限制时列明限制；不会为凑满分突破上限。输入顺序由实际采用策略确定，模块不优化证明组合或自动增加保密材料。输出包括实际选择、备选数、预计失分、排除原因和限制；`score` 永远是有材料支持的估计，不是评委给分。保密、新承诺和工作量例外由人在现有清单简记决定。
+
+## 合成验证
+
+仓库根目录运行：
+
+```sh
+python3 -m unittest discover -s tests -p test_chapters.py -v
+```
+
+测试覆盖两个共享人员章节及一个无关章节、一次局部变更、待定值占位、错人错期、缺映射、多份合同去重、报价轮次、未批准承诺和限制后的实际计分。它们证明所列机制的合成行为，不等于真实样本验收。

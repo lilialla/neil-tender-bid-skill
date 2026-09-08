@@ -1,0 +1,2 @@
+# Only PDF inventory/assembly requires an external runtime dependency.
+pypdf==6.12.2
