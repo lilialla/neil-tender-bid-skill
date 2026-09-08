@@ -201,8 +201,8 @@ class ChaptersTests(unittest.TestCase):
     def test_quote_round_conflicts_not_different_rounds(self):
         checklist, ledger = fixture()
         checklist["shared"].update({
-            "quote_a": {"kind": "quote", "round": "round-1", "value": "100000", "status": "confirmed", "source": "合成报价决定"},
-            "quote_b": {"kind": "quote", "round": "round-1", "value": "96600", "status": "confirmed", "source": "合成报价决定"},
+            "quote_a": {"kind": "quote", "round": "round-1", "value": "1240", "status": "confirmed", "source": "合成报价决定"},
+            "quote_b": {"kind": "quote", "round": "round-1", "value": "1370", "status": "confirmed", "source": "合成报价决定"},
         })
         findings = chapters.validate_chapters(checklist, ledger, results_for(checklist, ledger))
         self.assertIn("quote_round_conflict", {f["code"] for f in findings})
