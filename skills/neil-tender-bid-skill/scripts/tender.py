@@ -48,6 +48,7 @@ def parser():
     validate.add_argument("--checklist", type=Path, required=True)
     validate.add_argument("--requirements", type=Path, required=True)
     validate.add_argument("--results", type=Path, required=True, help="以chapter ID为键的结果JSON")
+    validate.add_argument("--chapter", action="append", help="只检查这些章节（可重复）；不代表全总账映射完整")
     impact = sub.add_parser("impact", help="只定位实际依赖变化的章节")
     for argument in ("before-checklist", "after-checklist", "before-requirements", "after-requirements"):
         impact.add_argument("--" + argument, type=Path, required=True)
@@ -113,7 +114,7 @@ def main(argv=None):
                 output(chapters.render_chapter(sources.read_json(args.packet)), args.out)
             elif args.command == "chapters-check":
                 value = chapters.validate_chapters(sources.read_json(args.checklist),
-                    chapters.read_requirements(args.requirements), sources.read_json(args.results))
+                    chapters.read_requirements(args.requirements), sources.read_json(args.results), chapter_ids=args.chapter)
                 output(value)
                 return 1 if value else 0
             elif args.command == "impact":

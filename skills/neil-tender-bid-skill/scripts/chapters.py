@@ -223,8 +223,8 @@ def impact(before_checklist, after_checklist, before_requirements, after_require
     return result
 
 
-def validate_chapters(checklist, requirements, results):
-    """Return findings, not a release decision. Human continue decisions cannot erase them."""
+def validate_chapters(checklist, requirements, results, *, chapter_ids=None):
+    """Check all chapters by default, or explicit units without claiming full-ledger coverage."""
     findings = []
 
     def add(code, chapter=None, status="阻断", **details):
@@ -238,10 +238,15 @@ def validate_chapters(checklist, requirements, results):
     try:
         ledger = _requirements(requirements)
         chapter_map = _chapter_index(checklist)
+        if chapter_ids is not None:
+            selected = _ids(chapter_ids, "selected chapter IDs")
+            if not selected or any(identifier not in chapter_map for identifier in selected):
+                raise ValueError("selected chapter IDs must be nonempty and exist in the checklist")
+            chapter_map = {identifier: chapter_map[identifier] for identifier in selected}
     except (ValueError, TypeError, AttributeError) as error:
         add("invalid_input", detail=str(error))
         return findings
-    mapped = set()
+    mapped, used_shared = set(), set()
     for chapter in chapter_map.values():
         try:
             packet = prepare_packet(checklist, requirements, chapter["id"])
@@ -249,6 +254,7 @@ def validate_chapters(checklist, requirements, results):
             add("unknown_reference", chapter, detail=str(error))
             continue
         mapped.update(packet["dependencies"]["requirement_ids"])
+        used_shared.update(packet["dependencies"]["shared_keys"])
         for row in packet["requirements"]:
             if row["status"] != "已确认":
                 add("requirement_pending", chapter, status="待核", requirement_id=row["requirement_id"])
@@ -309,11 +315,14 @@ def validate_chapters(checklist, requirements, results):
                         add("material_period_mismatch", chapter, field=kind, **details)
                 except (KeyError, TypeError, ValueError):
                     add("material_period_unverified", chapter, status="待核", field=kind, **details)
-    for identifier, row in ledger.items():
-        if row["status"] != "已被补遗取代" and identifier not in mapped:
-            add("unmapped_requirement", requirement_id=identifier)
+    if chapter_ids is None:
+        for identifier, row in ledger.items():
+            if row["status"] != "已被补遗取代" and identifier not in mapped:
+                add("unmapped_requirement", requirement_id=identifier)
     quotes = {}
     for key, fact in checklist.get("shared", {}).items():
+        if chapter_ids is not None and key not in used_shared:
+            continue
         if fact.get("kind") != "quote" or _value_gap(fact):
             continue
         if not fact.get("round"):

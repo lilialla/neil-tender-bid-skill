@@ -64,13 +64,15 @@ python3 "<skill-root>/scripts/tender.py" impact --before-checklist "<原清单>"
 
 `render` 结果的 `content` 是正文，可另存为本章 Markdown 再交现有文档工具；`gaps` 等字段只留内部。模型自由起草使用同一 packet 而不必调用模板渲染。
 
+只核对正在制作的章节时，给 `chapters-check` 增加 `--chapter team --chapter service`；它仍检查这些章节的全部适用约束、共用值及证明，但不把其他尚未编制的章节报成遗漏。未给 `--chapter` 时保留完整总账映射检查。局部检查不能用于宣称全本响应完整，整合前仍应运行默认完整检查；不另复制一份精简总账。
+
 | 函数 | 输出与用途 |
 |---|---|
 | `read_requirements(csv_path)` | UTF-8/BOM CSV 转列表；表头必须按规划的固定九列顺序，ID 唯一，必需值非空，要求状态使用规划中的四种中文状态。 |
 | `prepare_packet(checklist, requirements, chapter_id)` | 深复制本章及适用全局规则的完整要求、来源、必要材料和共用值。未知引用抛出 `ValueError`。 |
 | `render_chapter(packet)` | 返回 `content`、`requirement_ids`、内部 `gaps`、`used_values`、`dependencies`、`input_fingerprint`；正文只作 `{{key}}` 替换，不调用模型。 |
 | `impact(before_checklist, after_checklist, before_requirements, after_requirements)` | 返回 `affected`、`unchanged`、`uncertain`、`issues`；比较实际选中输入，未知引用放入待核范围。 |
-| `validate_chapters(checklist, requirements, results)` | `results` 是按章节 ID 索引的结果字典；返回问题列表，不作递交放行决定。 |
+| `validate_chapters(checklist, requirements, results, chapter_ids=None)` | `results` 按章节 ID 索引；可显式限定检查单元，默认检查全总账映射。返回问题列表，不作递交放行决定。 |
 | `score_performance(candidates, rule)` | 根据已确认的按项计分规则，按独立 ID 去重，计算有材料支持的预估分及默认一项备选。 |
 
 `prepare_packet` 也会识别模板直接引用及材料核对所需的共用字段，避免人工漏写依赖导致错误声称无影响。它不会带入其他章节正文或无关材料。输入指纹用于识别使用旧输入的结果，不证明来源或人工批准的真实性。

@@ -61,6 +61,19 @@ def results_for(checklist, ledger):
 
 
 class ChaptersTests(unittest.TestCase):
+    def test_scoped_check_does_not_report_other_unbuilt_chapters_as_missing(self):
+        checklist, ledger = fixture()
+        results = results_for(checklist, ledger)
+        scoped = chapters.validate_chapters(checklist, ledger + [requirement("R4")],
+                                            {"team": results["team"]}, chapter_ids=["team"])
+        self.assertEqual(scoped, [])
+        whole = chapters.validate_chapters(checklist, ledger + [requirement("R4")], results)
+        self.assertTrue(any(x["code"] == "unmapped_requirement" and x["requirement_id"] == "R4" for x in whole))
+        invalid = chapters.validate_chapters(checklist, ledger, results, chapter_ids=["unknown"])
+        self.assertTrue(any(x["code"] == "invalid_input" for x in invalid))
+        tampered = dict(results["team"], used_values={"lawyer": "wrong person"})
+        self.assertTrue(chapters.validate_chapters(checklist, ledger, {"team": tampered}, chapter_ids=["team"]))
+
     def test_exact_nine_columns_csv_and_duplicate_id_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "requirements.csv"
