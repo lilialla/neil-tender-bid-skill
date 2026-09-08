@@ -1,0 +1,46 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*token*
+*credential*
+secrets/
+.DS_Store
+
+# Runtimes and caches
+.venv/
+venv/
+node_modules/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Private business inputs and generated work products
+data/
+private/
+samples/
+source-materials/
+workspaces/
+working/
+output/
+outputs/
+render/
+renders/
+tmp/
+temp/
+logs/
+*.log
+*.zip
+*.pdf
+*.docx
+*.doc
+*.xlsx
+*.xls
+*.pptx
+*.ppt
