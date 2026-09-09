@@ -224,6 +224,26 @@ def impact(before_checklist, after_checklist, before_requirements, after_require
     return result
 
 
+def _result_shape_errors(result):
+    """Check the fixed result boundary without adapting free-form model output."""
+    if not isinstance(result, dict):
+        return [("result", "selected result must be an object")]
+    errors = []
+    for field, kind, label in (("content", str, "string"),
+                               ("requirement_ids", list, "list of strings"),
+                               ("gaps", list, "list"),
+                               ("used_values", dict, "object keyed by shared field"),
+                               ("dependencies", dict, "object"),
+                               ("input_fingerprint", str, "string")):
+        if field not in result:
+            errors.append((field, f"missing required result field: {field}"))
+        elif not isinstance(result[field], kind):
+            errors.append((field, f"result.{field} must be a {label}"))
+        elif field == "requirement_ids" and any(not isinstance(value, str) for value in result[field]):
+            errors.append((field, "result.requirement_ids must be a list of strings"))
+    return errors
+
+
 def validate_chapters(checklist, requirements, results, *, chapter_ids=None):
     """Check all chapters by default, or explicit units without claiming full-ledger coverage."""
     findings = []
@@ -247,6 +267,9 @@ def validate_chapters(checklist, requirements, results, *, chapter_ids=None):
     except (ValueError, TypeError, AttributeError) as error:
         add("invalid_input", detail=str(error))
         return findings
+    if not isinstance(results, dict):
+        add("invalid_result", field="results", detail="results must be an object keyed by chapter ID")
+        return findings
     mapped, used_shared = set(), set()
     for chapter in chapter_map.values():
         try:
@@ -260,8 +283,11 @@ def validate_chapters(checklist, requirements, results, *, chapter_ids=None):
             if row["status"] != "已确认":
                 add("requirement_pending", chapter, status="待核", requirement_id=row["requirement_id"])
         result = results.get(chapter["id"])
-        if result is None:
+        if chapter["id"] not in results:
             add("missing_result", chapter)
+        elif shape_errors := _result_shape_errors(result):
+            for field, detail in shape_errors:
+                add("invalid_result", chapter, field=field, detail=detail)
         else:
             if result.get("input_fingerprint") != packet["input_fingerprint"]:
                 add("stale_result", chapter)

@@ -3,7 +3,10 @@
 import copy
 import csv
 import importlib.util
+import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -61,6 +64,109 @@ def results_for(checklist, ledger):
 
 
 class ChaptersTests(unittest.TestCase):
+    def test_invalid_results_container_returns_a_finding(self):
+        checklist, ledger = fixture()
+        for value in (None, [], "result", 1, False):
+            with self.subTest(value=value):
+                findings = chapters.validate_chapters(checklist, ledger, value)
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0]["code"], "invalid_result")
+                self.assertEqual(findings[0]["field"], "results")
+                self.assertEqual(findings[0]["status"], "阻断")
+
+    def test_invalid_selected_result_does_not_change_missing_or_scoped_behavior(self):
+        checklist, ledger = fixture()
+        results = results_for(checklist, ledger)
+        for value in (None, [], "result", 1, False):
+            with self.subTest(value=value):
+                results["team"] = value
+                findings = chapters.validate_chapters(checklist, ledger, results, chapter_ids=["team"])
+                self.assertEqual([(f["code"], f.get("chapter_id"), f.get("field")) for f in findings],
+                                 [("invalid_result", "team", "result")])
+                self.assertEqual(chapters.validate_chapters(checklist, ledger, results,
+                                                           chapter_ids=["service"]), [])
+        del results["team"]
+        findings = chapters.validate_chapters(checklist, ledger, results, chapter_ids=["team"])
+        self.assertEqual([f["code"] for f in findings], ["missing_result"])
+
+    def test_result_fields_report_missing_or_wrong_shapes_without_guessing(self):
+        checklist, ledger = fixture()
+        valid = results_for(checklist, ledger)["team"]
+        invalid_values = {
+            "content": (None, [], {}),
+            "requirement_ids": (None, "R1", {}, [{"id": "R1"}], [1]),
+            "gaps": (None, {}, "pending"),
+            "used_values": (None, [], [{"key": "lawyer", "value": "合成人员甲"}]),
+            "dependencies": (None, [], "R1"),
+            "input_fingerprint": (None, [], {}),
+        }
+        for field, values in invalid_values.items():
+            for missing, value in [(True, None), *[(False, value) for value in values]]:
+                with self.subTest(field=field, value=value, missing=missing):
+                    result = copy.deepcopy(valid)
+                    if missing:
+                        del result[field]
+                    else:
+                        result[field] = value
+                    original = copy.deepcopy(result)
+                    findings = chapters.validate_chapters(checklist, ledger, {"team": result},
+                                                          chapter_ids=["team"])
+                    self.assertEqual([(f["code"], f.get("field")) for f in findings],
+                                     [("invalid_result", field)])
+                    self.assertIn(field, findings[0]["detail"])
+                    self.assertEqual(result, original)
+
+    def test_free_result_shape_error_preserves_other_pending_checks(self):
+        checklist, ledger = fixture()
+        checklist["chapters"][0].pop("template")
+        checklist["shared"]["lawyer"]["status"] = "pending"
+        checklist["materials"]["M1"]["status"] = "pending"
+        ledger[0]["status"] = "待澄清"
+        packet = chapters.prepare_packet(checklist, ledger, "team")
+        result = {"paragraphs": ["合成独立输出正文。"], "gaps": [],
+                  "used_values": [{"key": "lawyer", "value": "合成人员甲"}],
+                  "input_fingerprint": packet["input_fingerprint"]}
+        findings = chapters.validate_chapters(checklist, ledger, {"team": result}, chapter_ids=["team"])
+        self.assertEqual({f["field"] for f in findings if f["code"] == "invalid_result"},
+                         {"content", "requirement_ids", "dependencies", "used_values"})
+        self.assertTrue({"requirement_pending", "fact_pending", "material_pending"} <=
+                        {f["code"] for f in findings})
+        self.assertNotIn("semantic_review_required", {f["code"] for f in findings})
+
+    def test_valid_free_result_keeps_semantic_and_unapproved_commitment_findings(self):
+        checklist, ledger = fixture()
+        checklist["chapters"][1].pop("template")
+        checklist["shared"]["response_hours"].pop("approval")
+        packet = chapters.prepare_packet(checklist, ledger, "service")
+        result = {"content": "合成自由正文。", "requirement_ids": packet["dependencies"]["requirement_ids"],
+                  "dependencies": packet["dependencies"], "input_fingerprint": packet["input_fingerprint"],
+                  "gaps": [{"code": "unapproved_commitment", "shared_key": "response_hours"}],
+                  "used_values": {"lawyer": "合成人员甲"}}
+        findings = chapters.validate_chapters(checklist, ledger, {"service": result}, chapter_ids=["service"])
+        self.assertEqual({f["code"] for f in findings},
+                         {"semantic_review_required", "unapproved_commitment"})
+
+    def test_cli_reports_invalid_free_result_as_json_without_traceback(self):
+        checklist, ledger = fixture()
+        checklist["chapters"][0].pop("template")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "checklist.json").write_text(json.dumps(checklist), encoding="utf-8")
+            (root / "results.json").write_text(json.dumps({"team": {"used_values": []}}), encoding="utf-8")
+            with (root / "requirements.csv").open("w", encoding="utf-8", newline="") as file:
+                writer = csv.DictWriter(file, fieldnames=chapters.REQUIREMENT_COLUMNS)
+                writer.writeheader()
+                writer.writerows(ledger)
+            completed = subprocess.run(
+                [sys.executable, str(SCRIPT.with_name("tender.py")), "chapters-check",
+                 "--checklist", str(root / "checklist.json"), "--requirements", str(root / "requirements.csv"),
+                 "--results", str(root / "results.json"), "--chapter", "team"],
+                capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(completed.stderr, "")
+        self.assertEqual({f["code"] for f in json.loads(completed.stdout)}, {"invalid_result"})
+
     def test_generation_context_is_scoped_and_copied_without_answer_history(self):
         checklist, ledger = fixture()
         chapter = checklist["chapters"][0]
