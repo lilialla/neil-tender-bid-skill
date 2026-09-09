@@ -130,7 +130,8 @@ def prepare_packet(checklist, requirements, chapter_id):
         raise ValueError("chapter references a superseded requirement")
     packet = {
         "chapter": {key: copy.deepcopy(chapter[key]) for key in
-                    ("id", "path", "template", "output", "material_checks", "decisions") if key in chapter},
+                    ("id", "path", "template", "output", "material_checks", "decisions",
+                     "source_context", "format_skeleton", "output_contract") if key in chapter},
         "requirements": copy.deepcopy([ledger[identifier] for identifier in req_ids]),
         "shared": copy.deepcopy({key: shared[key] for key in shared_keys}),
         "materials": copy.deepcopy({key: materials[key] for key in material_ids}),

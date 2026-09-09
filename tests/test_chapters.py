@@ -61,6 +61,36 @@ def results_for(checklist, ledger):
 
 
 class ChaptersTests(unittest.TestCase):
+    def test_generation_context_is_scoped_and_copied_without_answer_history(self):
+        checklist, ledger = fixture()
+        chapter = checklist["chapters"][0]
+        chapter.update(
+            source_context={"pages": [{"number": 2, "text": "合成跨页条款的续文及注释。"}]},
+            format_skeleton={"slots": [{"id": "team_intro", "text": ""}]},
+            output_contract={"required_fields": ["content", "evidence_use", "gaps"]},
+            previous_answer="不得自动送入独立生成上下文的旧答案",
+        )
+        packet = chapters.prepare_packet(checklist, ledger, "team")
+        for key in ("source_context", "format_skeleton", "output_contract"):
+            self.assertEqual(packet["chapter"].get(key), chapter[key])
+            self.assertNotIn(key, chapters.prepare_packet(checklist, ledger, "service")["chapter"])
+        self.assertNotIn("previous_answer", packet["chapter"])
+        packet["chapter"]["source_context"]["pages"][0]["text"] = "隔离副本的改动"
+        self.assertEqual(chapter["source_context"]["pages"][0]["text"], "合成跨页条款的续文及注释。")
+
+    def test_generation_context_changes_invalidate_only_the_owning_chapter(self):
+        checklist, ledger = fixture()
+        old_results = results_for(checklist, ledger)
+        for key in ("source_context", "format_skeleton", "output_contract"):
+            with self.subTest(field=key):
+                after = copy.deepcopy(checklist)
+                after["chapters"][0][key] = {"instruction": "新增的合成生成约束"}
+                changes = chapters.impact(checklist, after, ledger, ledger)
+                self.assertEqual(changes["affected"], ["team"])
+                self.assertEqual(changes["unchanged"], ["service", "other"])
+                findings = chapters.validate_chapters(after, ledger, old_results, chapter_ids=["team"])
+                self.assertTrue(any(f["code"] == "stale_result" for f in findings))
+
     def test_scoped_check_does_not_report_other_unbuilt_chapters_as_missing(self):
         checklist, ledger = fixture()
         results = results_for(checklist, ledger)
