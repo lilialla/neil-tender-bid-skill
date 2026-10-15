@@ -8,6 +8,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills/neil-tender-bid-skill/scripts"))
 import sources
+import chapters
 
 
 class SourceTests(unittest.TestCase):
@@ -48,6 +49,23 @@ class SourceTests(unittest.TestCase):
         self.assertFalse(report["can_freeze"])
         self.assertTrue(report["risk_hints"])
         self.assertEqual(len(sources.read_requirements(self.project / "requirements.csv")), 0)
+
+    def test_source_and_chapter_readers_reject_the_same_invalid_ledger(self):
+        self.prepare()
+        valid = sources.read_requirements(self.project / "requirements.csv")
+        for field, value in (("requirement_id", "R1 "), ("requirement_id", " R1"),
+                             ("requirement", ""), ("status", "unknown")):
+            with self.subTest(field=field, value=value):
+                rows = [dict(valid[0], **{field: value}), valid[1]]
+                with (self.project / "requirements.csv").open("w", encoding="utf-8", newline="") as stream:
+                    writer = csv.DictWriter(stream, fieldnames=sources.COLUMNS)
+                    writer.writeheader()
+                    writer.writerows(rows)
+                for reader in (sources.read_requirements, chapters.read_requirements):
+                    with self.assertRaises(ValueError):
+                        reader(self.project / "requirements.csv")
+                with self.assertRaises(ValueError):
+                    sources.write_requirements(self.root / "invalid.csv", rows)
 
     def test_full_source_coverage_and_frozen_version(self):
         self.prepare()

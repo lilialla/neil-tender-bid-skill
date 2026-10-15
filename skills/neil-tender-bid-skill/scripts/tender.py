@@ -100,7 +100,7 @@ def main(argv=None):
                 value = sources.read_json(args.checklist)
                 result = assembly.assess_files(value.get("files", []), value.get("checks", []),
                     value.get("execution", {}), args.stage, source_project=args.project,
-                    context={key: value.get(key) for key in ("shared", "materials", "chapters", "global_constraints",
+                    context={key: value.get(key) for key in ("shared", "materials", "chapters", "global_constraints", "requirement_dispositions",
                                                            "as_of", "rules_version") if key in value})
                 output(result)
                 return 0 if result["all_checks_passed"] else 1

@@ -12,6 +12,7 @@ import unittest
 
 
 SCRIPT = Path(__file__).parents[1] / "skills/neil-tender-bid-skill/scripts/chapters.py"
+sys.path.insert(0, str(SCRIPT.parent))
 SPEC = importlib.util.spec_from_file_location("chapters", SCRIPT)
 chapters = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(chapters)
@@ -64,6 +65,58 @@ def results_for(checklist, ledger):
 
 
 class ChaptersTests(unittest.TestCase):
+    def test_dispositions_cover_nonchapter_requirements_without_clearing_chapter_checks(self):
+        checklist, ledger = fixture()
+        ledger.append(requirement("R4"))
+        checklist["requirement_dispositions"] = [
+            {"requirement_id": "R4", "type": "execution", "status": "verified",
+             "location": "执行清单第1项", "basis": "合成负责人已核实登记"}]
+        self.assertEqual(chapters.validate_chapters(checklist, ledger, results_for(checklist, ledger)), [])
+        findings = chapters.validate_chapters(checklist, ledger, {})
+        self.assertEqual({item["code"] for item in findings}, {"missing_result"})
+
+    def test_pending_blocked_and_unconfirmed_dispositions_remain_findings(self):
+        checklist = {"chapters": [], "requirement_dispositions": []}
+        ledger = [requirement("R1")]
+        for state, expected in (("pending", "待核"), ("blocked", "阻断")):
+            checklist["requirement_dispositions"] = [
+                {"requirement_id": "R1", "type": "proof", "status": state,
+                 "location": "", "basis": "合成材料尚未取得"}]
+            findings = chapters.validate_chapters(checklist, ledger, {})
+            self.assertEqual([(item["code"], item["status"]) for item in findings],
+                             [("disposition_pending" if state == "pending" else "disposition_blocked", expected)])
+        checklist["requirement_dispositions"][0].update(status="verified", location="证明第1页")
+        ledger[0]["status"] = "待澄清"
+        self.assertIn("requirement_pending", {item["code"] for item in
+                      chapters.validate_chapters(checklist, ledger, {})})
+
+    def test_disposition_contract_rejects_invalid_or_unsupported_records(self):
+        valid = {"requirement_id": "R1", "type": "response", "status": "verified",
+                 "location": "正文第1节", "basis": "已按合成原文核对"}
+        invalid = [None, {}, dict(valid, requirement_id="R9"), dict(valid, requirement_id="R1 "),
+                   dict(valid, type="other"), dict(valid, status="complete"),
+                   dict(valid, basis=""), dict(valid, location=""),
+                   dict(valid, status="not_applicable"), dict(valid, type="not_applicable")]
+        for entry in invalid:
+            with self.subTest(entry=entry):
+                findings = chapters.validate_chapters(
+                    {"chapters": [], "requirement_dispositions": [entry]}, [requirement("R1")], {})
+                self.assertIn("invalid_disposition", {item["code"] for item in findings})
+        findings = chapters.validate_chapters(
+            {"chapters": [], "requirement_dispositions": [valid, valid]}, [requirement("R1")], {})
+        self.assertIn("invalid_disposition", {item["code"] for item in findings})
+        self.assertEqual(chapters.validate_chapters(
+            {"chapters": [], "requirement_dispositions": [dict(valid, type="not_applicable",
+                status="not_applicable", location="", basis="合成采购原文明确不适用")]},
+            [requirement("R1")], {}), [])
+
+    def test_scoped_chapter_check_does_not_report_unrelated_dispositions(self):
+        checklist, ledger = fixture()
+        checklist["requirement_dispositions"] = [{"requirement_id": "R3", "type": "proof",
+            "status": "pending", "location": "", "basis": "无关章节的合成待补材料"}]
+        self.assertEqual(chapters.validate_chapters(checklist, ledger, results_for(checklist, ledger),
+                                                   chapter_ids=["team"]), [])
+
     def test_invalid_results_container_returns_a_finding(self):
         checklist, ledger = fixture()
         for value in (None, [], "result", 1, False):

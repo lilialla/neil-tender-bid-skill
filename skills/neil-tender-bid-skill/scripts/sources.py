@@ -40,19 +40,34 @@ def read_requirements(path: Path) -> list[dict]:
     with Path(path).open(encoding="utf-8-sig", newline="") as stream:
         reader = csv.DictReader(stream)
         if reader.fieldnames != COLUMNS:
-            raise ValueError("要求总账必须恰有规划规定的九列，且顺序一致")
+            raise ValueError("要求总账必须恰有规定的9列，且顺序一致")
         rows = list(reader)
-    if any(None in row or any(value is None for value in row.values()) for row in rows):
-        raise ValueError("要求总账存在缺列或多列")
-    ids = [row["requirement_id"] for row in rows]
-    if any(not value.strip() for value in ids) or len(ids) != len(set(ids)):
-        raise ValueError("要求编号为空或重复")
+    validate_requirements(rows)
     return rows
 
 
+def validate_requirements(rows: list[dict]) -> dict:
+    """One ledger contract for source intake, chapter inputs and CSV output."""
+    indexed = {}
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != set(COLUMNS):
+            raise ValueError("requirements must have exactly nine columns")
+        if any(not isinstance(row[key], str) for key in COLUMNS):
+            raise ValueError("requirement fields must be strings")
+        for key in COLUMNS:
+            if key != "ambiguity_or_clarification" and not row[key].strip():
+                raise ValueError(f"empty requirement field: {key}")
+        identifier = row["requirement_id"]
+        if identifier != identifier.strip() or identifier in indexed:
+            raise ValueError(f"duplicate or untrimmed requirement_id: {identifier}")
+        if row["status"] not in STATES:
+            raise ValueError(f"unknown requirement status: {row['status']}")
+        indexed[identifier] = row
+    return indexed
+
+
 def write_requirements(path: Path, rows: list[dict]) -> None:
-    if any(set(row) != set(COLUMNS) or any(not isinstance(row[key], str) for key in COLUMNS) for row in rows):
-        raise ValueError("要求总账每行须恰有九个字符串字段；多位置数组先明确转换为换行分隔的单元格")
+    validate_requirements(rows)
     with Path(path).open("w", encoding="utf-8", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=COLUMNS)
         writer.writeheader()

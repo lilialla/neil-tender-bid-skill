@@ -85,6 +85,17 @@ class CliTests(unittest.TestCase):
             sources.write_json(checklist_path, checklist)
             ready = cli("status", "--project", project, "--checklist", checklist_path, "--stage", "signing")
             self.assertEqual(ready["state"], "待签章／待执行候选版")
+            checklist["reference_files"] = [{"path": str(root / "missing-old.pdf"), "sha256": "a" * 64}]
+            sources.write_json(checklist_path, checklist)
+            historical = cli("status", "--project", project, "--checklist", checklist_path, "--stage", "signing")
+            self.assertEqual(historical["files_digest"], ready["files_digest"])
+            self.assertEqual(historical["basis_digest"], ready["basis_digest"])
+            checklist["requirement_dispositions"] = [{"requirement_id": "R1", "type": "response",
+                "status": "verified", "location": "合成正文第1节", "basis": "实际合成核对"}]
+            sources.write_json(checklist_path, checklist)
+            disposition_change = cli("status", "--project", project, "--checklist", checklist_path,
+                                     "--stage", "signing", code=1)
+            self.assertNotEqual(disposition_change["basis_digest"], ready["basis_digest"])
             raw.write_text("合成补遗改变来源。", encoding="utf-8")
             stale = cli("status", "--project", project, "--checklist", checklist_path, "--stage", "signing", code=1)
             self.assertFalse(stale["all_checks_passed"])

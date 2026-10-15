@@ -49,7 +49,29 @@
 - `material_checks` 可用 `subject_key`、`person_key` 指向已确认共用值，核对材料的 `subject`、`person`。`period_start_key`、`period_end_key` 指向 `YYYY-MM-DD` 日期，核对材料的证明期间是否覆盖所需期间。不能用合同标题相似代替这些核对；有其他证据条件时仍需原页审查。
 - `global_constraints.scope` 使用章节 ID 列表，确实全局适用时用 `["*"]`；适用原文由 `requirement_ids` 一起完整带入。错误章节 ID 或要求引用会明确报错，不能默认该约束没有影响。
 - 共同约束涉及批准时限、人员或材料时，用该约束的 `shared_keys`、`material_ids` 明确引用；`text` 中的 `{{key}}` 也会带入对应共用值。这样修改时限会使受该约束的全部章节失效。自由文字中的隐含依赖仍须由操作者识别，脚本不猜测。
+- 证件有效性、执业年限和滚动业绩期间等时间敏感章节，通过已有 `shared_keys` 明确引用适用时点及必要规则版本，并给这些共享值记录来源。顶层 `as_of`、`rules_version` 会使文件集检查失效，但不会自动成为每章的生成输入；章节依赖变化按实际声明识别。
 - 章节 `decisions` 可记录 `[{"by":"负责人","action":"continue","reason":"先生成工作稿"}]`。检查问题保留该决定；不会把问题改为通过，也不会把未取得证明写成已取得。
+
+### 逐项处置与完整映射
+
+同一清单可用 `requirement_dispositions` 数组登记不单独生成章节的要求，补充默认完整映射；不另建台账。每个现行要求最多一条，保留旧文字字段不妨碍增加以下固定字段：
+
+```json
+{
+  "requirement_id": "R4",
+  "type": "execution",
+  "status": "pending",
+  "location": "执行清单第1项",
+  "basis": "采购原文要求现场出示原件；尚待经办人确认执行"
+}
+```
+
+- `type` 限 `response`（正文）、`proof`（证明）、`execution`（执行事项）、`rule`（适用规则）、`not_applicable`（不适用）。
+- `status` 限 `verified`、`pending`、`blocked`、`not_applicable`。`basis` 始终须有实际依据；`location` 须为字符串，待核或阻断时可空。
+- `verified` 须为适用类型且有实际响应、证明、执行事项或规则的位置；它记录操作者已核的处置，不证明未来执行已经发生。`not_applicable` 状态须用同名类型并写明原文依据，可无响应位置。单纯登记编号、总括接受或无依据结论不能记为通过。
+- 未知、被补遗取代、重复或带首尾空格的要求编号，未知类型／状态，缺依据及已核却无位置，均报 `invalid_disposition`。`pending`、`blocked` 和要求解释未确认继续返回真实问题。
+
+完整 `chapters-check` 合并章节映射与有效逐项处置检查全量覆盖；已经映射到章节的要求仍检查该章节实际结果，处置不掩盖 `missing_result`、过期、事实或材料问题。`--chapter` 仅核所选章节，不将其他处置的待办混入局部结论。`status` 另行核对处置问题并绑定其版本，人工 G1—G6 通过记录不能抹去待核、阻断或无效处置。
 
 ## 模块接口
 

@@ -1,52 +1,30 @@
 """Bounded chapter inputs and deterministic checks; no OCR, LLM or external writes."""
 
 import copy
-import csv
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 import hashlib
 import json
 import re
 
+import sources
 
-REQUIREMENT_COLUMNS = (
-    "requirement_id", "source_locations", "source_text", "requirement",
-    "type_and_consequence", "satisfaction_condition", "required_response_or_proof",
-    "ambiguity_or_clarification", "status",
-)
-REQUIREMENT_STATUSES = {"待复核", "已确认", "待澄清", "已被补遗取代"}
+
+REQUIREMENT_COLUMNS = tuple(sources.COLUMNS)
+REQUIREMENT_STATUSES = sources.STATES
 PLACEHOLDER = re.compile(r"{{\s*([^{}\s]+)\s*}}")
 CHECK_KEYS = ("subject_key", "person_key", "period_start_key", "period_end_key")
+DISPOSITION_TYPES = {"response", "proof", "execution", "rule", "not_applicable"}
+DISPOSITION_STATUSES = {"verified", "pending", "blocked", "not_applicable"}
 
 
 def _requirements(rows):
-    indexed = {}
-    for row in rows:
-        if set(row) != set(REQUIREMENT_COLUMNS):
-            raise ValueError("requirements must have exactly nine columns")
-        if any(not isinstance(row[key], str) for key in REQUIREMENT_COLUMNS):
-            raise ValueError("requirement fields must be strings")
-        for key in REQUIREMENT_COLUMNS:
-            if key != "ambiguity_or_clarification" and not row[key].strip():
-                raise ValueError(f"empty requirement field: {key}")
-        identifier = row["requirement_id"]
-        if identifier != identifier.strip() or identifier in indexed:
-            raise ValueError(f"duplicate or untrimmed requirement_id: {identifier}")
-        if row["status"] not in REQUIREMENT_STATUSES:
-            raise ValueError(f"unknown requirement status: {row['status']}")
-        indexed[identifier] = row
-    return indexed
+    return sources.validate_requirements(rows)
 
 
 def read_requirements(csv_path):
     """Read UTF-8/BOM CSV; reject reordered, extra or missing columns and duplicate IDs."""
-    with open(csv_path, encoding="utf-8-sig", newline="") as file:
-        reader = csv.DictReader(file)
-        if reader.fieldnames != list(REQUIREMENT_COLUMNS):
-            raise ValueError("CSV header must be the exact nine columns in the specified order")
-        rows = list(reader)
-    _requirements(rows)
-    return rows
+    return sources.read_requirements(csv_path)
 
 
 def _ids(values, label):
@@ -244,6 +222,62 @@ def _result_shape_errors(result):
     return errors
 
 
+def _check_dispositions(dispositions, ledger):
+    """Validate explicit nonchapter handling without treating registration as completion."""
+    mapped, findings, seen = set(), [], set()
+
+    def invalid(index, detail, identifier=None):
+        findings.append({"code": "invalid_disposition", "status": "阻断", "index": index,
+                         "requirement_id": identifier, "detail": detail})
+
+    if not isinstance(dispositions, list):
+        invalid(None, "requirement_dispositions must be a list")
+        return mapped, findings
+    for index, entry in enumerate(dispositions):
+        if not isinstance(entry, dict):
+            invalid(index, "disposition must be an object")
+            continue
+        identifier = entry.get("requirement_id")
+        if (not isinstance(identifier, str) or not identifier.strip()
+                or identifier != identifier.strip() or identifier not in ledger):
+            invalid(index, "requirement_id must be a trimmed current ledger ID", identifier)
+            continue
+        if identifier in seen:
+            invalid(index, "duplicate requirement disposition", identifier)
+            continue
+        seen.add(identifier)
+        kind, state = entry.get("type"), entry.get("status")
+        if (not isinstance(kind, str) or kind not in DISPOSITION_TYPES
+                or not isinstance(state, str) or state not in DISPOSITION_STATUSES):
+            invalid(index, "unknown disposition type or status", identifier)
+            continue
+        if ledger[identifier]["status"] == "已被补遗取代":
+            invalid(index, "disposition references a superseded requirement", identifier)
+            continue
+        basis, location = entry.get("basis"), entry.get("location")
+        if not isinstance(basis, str) or not basis.strip() or not isinstance(location, str):
+            invalid(index, "basis must be nonempty and location must be a string", identifier)
+            continue
+        if state == "verified" and (kind == "not_applicable" or not location.strip()):
+            invalid(index, "verified requires an applicable type and actual location", identifier)
+            continue
+        if state == "not_applicable" and kind != "not_applicable":
+            invalid(index, "not_applicable status requires not_applicable type", identifier)
+            continue
+        mapped.add(identifier)
+        if ledger[identifier]["status"] != "已确认":
+            findings.append({"code": "requirement_pending", "status": "待核", "requirement_id": identifier})
+        if state in {"pending", "blocked"}:
+            findings.append({"code": f"disposition_{state}", "status": "待核" if state == "pending" else "阻断",
+                             "requirement_id": identifier, "type": kind, "location": location, "basis": basis})
+    return mapped, findings
+
+
+def validate_dispositions(dispositions, requirements):
+    """Return disposition problems independently of generated chapter results."""
+    return _check_dispositions(dispositions, _requirements(requirements))[1]
+
+
 def validate_chapters(checklist, requirements, results, *, chapter_ids=None):
     """Check all chapters by default, or explicit units without claiming full-ledger coverage."""
     findings = []
@@ -343,6 +377,9 @@ def validate_chapters(checklist, requirements, results, *, chapter_ids=None):
                 except (KeyError, TypeError, ValueError):
                     add("material_period_unverified", chapter, status="待核", field=kind, **details)
     if chapter_ids is None:
+        disposition_ids, disposition_findings = _check_dispositions(checklist.get("requirement_dispositions", []), ledger)
+        mapped.update(disposition_ids)
+        findings.extend(disposition_findings)
         for identifier, row in ledger.items():
             if row["status"] != "已被补遗取代" and identifier not in mapped:
                 add("unmapped_requirement", requirement_id=identifier)

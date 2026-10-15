@@ -2,8 +2,9 @@
 import hashlib
 import json
 from pathlib import Path
+import re
 
-from sources import sha256, check_project
+from sources import sha256, check_project, read_requirements
 
 
 def assemble_pdf(parts, destination):
@@ -65,6 +66,14 @@ def derive_stamp_parts(master, stamp_pages, output_directory):
 
 
 def files_digest(files):
+    if not isinstance(files, list):
+        raise ValueError("files须为当前候选的扁平文件数组；历史材料放reference_files")
+    for index, item in enumerate(files):
+        if (not isinstance(item, dict) or "files" in item
+                or not isinstance(item.get("path"), str) or not item["path"].strip()
+                or not isinstance(item.get("sha256"), str)
+                or not re.fullmatch(r"[0-9a-fA-F]{64}", item["sha256"])):
+            raise ValueError(f"files[{index}]须直接含非空path及实际sha256；嵌套旧件移至reference_files")
     selected = [{key: item[key] for key in ("path", "sha256")} for item in files]
     return hashlib.sha256(json.dumps(selected, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
@@ -77,8 +86,13 @@ def assess_files(files, checks, execution, stage="draft", *, source_project=None
     """
     if stage not in {"draft", "signing", "submission", "submitted"}:
         raise ValueError("未知检查阶段")
-    digest = files_digest(files)
     findings = []
+    try:
+        digest = files_digest(files)
+        current_files = files
+    except ValueError as error:
+        digest, current_files = None, []
+        findings.append({"gate": "G5", "item": "文件清单结构", "result": "阻断", "evidence": str(error)})
     source_digest = None
     if source_project is None or context is None:
         findings.append({"gate": "G1", "item": "检查依据", "result": "待核", "evidence": "需绑定采购项目与当前共用事实/规则时点"})
@@ -88,6 +102,13 @@ def assess_files(files, checks, execution, stage="draft", *, source_project=None
         findings.extend(report["findings"])
         if report["freeze_status"] != "current":
             findings.append({"gate": "G2", "item": "要求冻结", "result": "待核", "evidence": "尚无对应当前来源与要求的真实人工冻结"})
+        from chapters import validate_dispositions
+        for finding in validate_dispositions(context.get("requirement_dispositions", []),
+                                              read_requirements(Path(source_project) / "requirements.csv")):
+            findings.append({"gate": "G2" if finding["code"] == "requirement_pending" else "G3",
+                             "item": finding["code"], "result": finding["status"],
+                             "evidence": finding.get("basis") or finding.get("detail") or finding.get("requirement_id"),
+                             "requirement_id": finding.get("requirement_id")})
     live_materials = {}
     if context:
         selected = {identifier for chapter in context.get("chapters", []) for identifier in chapter.get("material_ids", [])}
@@ -99,17 +120,17 @@ def assess_files(files, checks, execution, stage="draft", *, source_project=None
             material = context.get("materials", {}).get(identifier, {})
             try:
                 current = sha256(Path(material["path"]))
-            except (OSError, KeyError):
+            except (OSError, KeyError, TypeError, ValueError):
                 current = "missing"
             live_materials[identifier] = current
             if current != material.get("sha256"):
                 findings.append({"gate": "G3", "item": "采用证明版本", "result": "阻断", "evidence": identifier})
     basis_digest = hashlib.sha256(json.dumps({"source": source_digest, "context": context,
         "live_materials": live_materials, "checker": sha256(Path(__file__))}, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-    if not files:
+    if not current_files:
         findings.append({"gate": "G5", "item": "文件清单", "result": "阻断", "evidence": "没有文件"})
-    files_current = bool(files)
-    for item in files:
+    files_current = bool(current_files)
+    for item in current_files:
         try:
             valid = sha256(Path(item["path"])) == item["sha256"]
         except OSError:

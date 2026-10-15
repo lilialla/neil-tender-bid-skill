@@ -95,6 +95,56 @@ class AssemblyTests(unittest.TestCase):
         self.assertFalse(value["all_checks_passed"])
         self.assertTrue(any(x["item"] == "文件版本" for x in value["findings"]))
 
+    def test_legacy_nested_or_invalid_current_files_return_structured_findings(self):
+        item = assembly.assemble_pdf([self.part([1])], self.root / "candidate.pdf")
+        for files in ([item, {"role": "旧版只读核对", "files": [item]}],
+                      [{"path": None, "sha256": "a" * 64}], [{"path": str(self.original)}], None):
+            with self.subTest(files=files):
+                report = assembly.assess_files(files, [], {}, "signing")
+                self.assertFalse(report["all_checks_passed"])
+                self.assertEqual(report["files_digest"], None)
+                self.assertIn("文件清单结构", {finding["item"] for finding in report["findings"]})
+                self.assertEqual(report["state"], "工作稿")
+
+    def test_null_material_path_is_a_missing_material_finding(self):
+        item = assembly.assemble_pdf([self.part([1])], self.root / "candidate.pdf")
+        report = assembly.assess_files([item], [], {}, "signing", context={
+            "chapters": [{"id": "team", "material_ids": ["missing"]}],
+            "materials": {"missing": {"path": None, "sha256": None, "status": "pending"}}})
+        self.assertTrue(any(finding["item"] == "采用证明版本" for finding in report["findings"]))
+
+    def test_current_manual_gates_cannot_clear_pending_or_invalid_dispositions(self):
+        import sources
+        procurement = self.root / "采购.txt"
+        procurement.write_text("应提供响应。", encoding="utf-8")
+        project = self.root / "项目"
+        sources.initialize(project, [procurement])
+        data = sources.read_json(project / "sources.json")
+        data["scope"] = {"status": "confirmed", "basis": "合成唯一来源", "missing": []}
+        data["sources"][0]["pages"][0].update(read_status="verified", read_basis="合成核对",
+            coverage=[{"start_line": 1, "end_line": 1, "status": "requirements_found",
+                       "checks": ["structure", "meaning", "risk"], "requirement_ids": ["R1"]}])
+        data["cross_checks"] = {key: {"status": "不适用", "basis": "合成原文无此结构"}
+                                for key in ("references", "scoring", "forms")}
+        sources.write_json(project / "sources.json", data)
+        row = dict(zip(sources.COLUMNS, ["R1", "主｜采购.txt｜1｜首行", "应提供响应。", "提供响应",
+                   "服务要求", "响应", "响应正文", "", "已确认"]))
+        sources.write_requirements(project / "requirements.csv", [row])
+        report = sources.check_project(project)
+        sources.freeze(project, "合成复核人", "合成冻结", report["digest"])
+        item = assembly.assemble_pdf([self.part([1])], self.root / "candidate.pdf")
+        for state, expected in (("pending", "disposition_pending"), ("blocked", "disposition_blocked"),
+                                ("unknown", "invalid_disposition")):
+            context = {"requirement_dispositions": [{"requirement_id": "R1", "type": "proof",
+                "status": state, "location": "", "basis": "合成证明待补"}]}
+            first = assembly.assess_files([item], [], {}, "signing", source_project=project, context=context)
+            checks = [{"gate": gate, "stage": "signing", "result": "通过", "evidence": "合成人工检查",
+                       "files_digest": first["files_digest"], "basis_digest": first["basis_digest"]}
+                      for gate in ("G1", "G2", "G3", "G4", "G5", "G6")]
+            actual = assembly.assess_files([item], checks, {}, "signing", source_project=project, context=context)
+            self.assertFalse(actual["all_checks_passed"])
+            self.assertIn(expected, {finding["item"] for finding in actual["findings"]})
+
     def test_human_continue_does_not_clear_gap_or_create_submission(self):
         item = assembly.assemble_pdf([self.part([1])], self.root / "candidate.pdf")
         value = assembly.assess_files([item], [], {"continue_decision": "合成测试决定继续编制"}, "signing")

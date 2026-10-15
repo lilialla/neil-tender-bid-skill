@@ -26,11 +26,13 @@ python3 "<skill-root>/scripts/tender.py" derive --master "<母稿装配记录JSO
 
 继续在章节清单附 `files`、`checks` 和 `execution`。顶层 `as_of` 记录本次适用时点，`rules_version` 记录本次采用的规则版本；时点、规则、事实和采用材料改变后更新清单。不能把过期证件的旧适用时点沿用到新递交日期。
 
+`files` 仅为本轮当前候选的扁平数组，每项直接含非空 `path` 和实际64位 `sha256`，可另保留用途、页数和页映射。历史文件单列 `reference_files`，供查阅，既不参与当前 `files_digest`，也不自动成为当前候选。把旧版文件组嵌在 `files[].files` 会返回“文件清单结构”阻断；工具不静默展开旧件。采用证明的 `path: null` 如实报告缺失，不推断本地路径。
+
 ```bash
 python3 "<skill-root>/scripts/tender.py" status --project "<来源与要求项目目录>" --checklist "<章节清单JSON>" --stage signing
 ```
 
-阶段参数为 `draft`、`signing`、`submission`、`submitted`。命令实时检查采购原件、要求总账和冻结状态，并比较当前共用事实、采用材料与检查绑定。第一次运行返回当前 `files_digest` 和 `basis_digest`；它们是这组文件及上游依据的身份，不是检查或人工确认。
+阶段参数为 `draft`、`signing`、`submission`、`submitted`。命令实时检查采购原件、要求总账、冻结状态及 `requirement_dispositions` 的待核／阻断／无效记录，并比较当前共用事实、采用材料与检查绑定。第一次运行返回当前 `files_digest` 和 `basis_digest`；它们是这组文件及上游依据的身份，不是检查或人工确认。当前文件结构无效时 `files_digest` 为 `null`，不产生有效候选身份。
 
 每项适用检查完成后，由操作者在同一清单记录：
 
