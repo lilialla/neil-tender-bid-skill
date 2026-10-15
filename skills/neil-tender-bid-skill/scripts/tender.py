@@ -25,6 +25,11 @@ def parser():
     init = sub.add_parser("init", help="读取本地来源，创建新的来源清单与空要求总账")
     init.add_argument("--project", type=Path, required=True)
     init.add_argument("--source", type=Path, action="append", required=True)
+    ocr = sub.add_parser("attach-ocr", help="关联既有MinerU content_list v1；仅支持同一采购原PDF全本")
+    ocr.add_argument("--project", type=Path, required=True)
+    ocr.add_argument("--source", type=Path, required=True, help="已登记的采购原PDF准确路径")
+    ocr.add_argument("--input", type=Path, required=True, help="实际提交OCR的PDF；须与登记原件字节相同")
+    ocr.add_argument("--result", type=Path, required=True, help="实际下载的MinerU content_list v1 JSON")
     check = sub.add_parser("check", help="核查G1/G2；全页标记不等于语义无遗漏")
     check.add_argument("--project", type=Path, required=True)
     check.add_argument("--full", action="store_true", help="包含源侧风险行提示")
@@ -74,6 +79,12 @@ def main(argv=None):
             inventory = sources.initialize(args.project, args.source)
             output({"project": str(args.project.resolve()), "sources": len(inventory["sources"]),
                     "status": "工作版，尚未逐范围阅读或人工冻结"})
+        elif args.command == "attach-ocr":
+            inventory = sources.attach_ocr(args.project, args.source, args.input, args.result)
+            record = next(record for record in inventory["sources"]
+                          if Path(record["path"]).resolve() == args.source.resolve())
+            output({"source": record["name"], "pages": len(record["pages"]),
+                    "status": "已关联OCR工作文字；各页待原页核对，未确认读取或冻结"})
         elif args.command == "check":
             report = sources.check_project(args.project)
             if not args.full:

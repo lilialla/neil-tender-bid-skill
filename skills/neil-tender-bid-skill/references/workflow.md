@@ -52,6 +52,22 @@ python3 "<skill-root>/scripts/tender.py" replay --candidate "<首次候选CSV>" 
 
 有可靠文本层时本地提取，并用原页检查表格、表头、勾选和跨页结构。需 OCR 时先核对 `mineru-ocr` 授权覆盖实际文件；代表页验证方法后再扩展全文。没有授权不产生上传，也不把不可读页写成无要求。
 
+#### 扫描PDF的既有OCR结果
+
+先用 `init` 登记原采购 PDF，再关联已取得的 MinerU `content_list` v1 JSON；本命令不执行上传或 OCR：
+
+```bash
+python3 "<skill-root>/scripts/tender.py" attach-ocr --project "<项目内部工作目录>" --source "<已登记采购原PDF>" --input "<实际提交OCR的全本PDF>" --result "<实际下载的content_list.json>"
+```
+
+首版只接收与登记及当前采购原 PDF 字节完全相同的全本输入，逐页对应原 PDF 物理页；不支持抽页、重排或缺页结果。原始数组每项的 `page_idx` 须为范围内的整数，0 至末页全部出现；同页可有多项，按原数组顺序收集。支持 `text/header/page_number/aside_text` 的原样 `text`，表格的 `table_caption/table_body/table_footnote`，及图片的 `image_caption`、`[原页图像：img_path]`、`image_footnote`；非空片段用双换行连接。未知正文结构直接拒绝，HTML 表格不自动改词。
+
+来源的 `ocr` 记录 provider、实际输入与原始结果路径和哈希、原件哈希及页数；每页 `ocr` 留存原始文本、文本哈希及0起算 `page_idx`，`working_text_source: "ocr"` 选择工作文字。原生 `text/text_sha256/method` 保持不变，检查会重读原 PDF、实际输入及原始结果核对。关联或重新关联会清空相应页的读取依据、覆盖记录及旧读取指纹，并置为 `needs_review`。
+
+实际回读原页发现 OCR 漏字或错字时，只在该页 `ocr.corrections` 记录 `[{"before": "原OCR字串", "after": "原页核实文字", "basis": "原PDF页码及实际核对位置"}]`。每项 `before` 非空且须在逐步修正的文字中恰好出现一次，`after` 为字符串，`basis` 非空；否则拒绝使用。原始 OCR 文字与哈希不改，覆盖及引文使用按记录字面替换后的工作文字。
+
+逐页核对原页结构和实际工作文字后，才填写 `read_status: "verified"`、真实 `read_basis`，并将 `sources.expected_review_digest(record, page)` 的当前结果写入该页 `reviewed_digest`。此辅助函数只计算版本指纹，不执行阅读或批准。指纹绑定原件、OCR输入、结果、本页工作文字及修正依据；任一变化后旧读取确认与所据覆盖不再有效，须复核受影响范围并重填。OCR 文件缺失或变化也会使旧检查及冻结失效。
+
 ### 2. 逐范围理解
 
 保持原始章节和编号。每次载入一个完整语义范围：条款及子项、表头连同行列与注释、一份表式及填报说明，或跨页连续内容。对每一范围依次做：
@@ -75,7 +91,7 @@ python3 "<skill-root>/scripts/tender.py" replay --candidate "<首次候选CSV>" 
 
 被引用的附件、条款和续页必须纳入来源处置。页数和范围编号齐全只能证明登记覆盖，不证明规范内容已正确提取。
 
-实际填写 `sources.json` 时保留脚本产生的源文件哈希、原生 `text` 及 `text_sha256`，不要在文本中改 OCR 猜测或修写原文。以 `text.splitlines()` 的 1 起算行号登记覆盖，空行也要纳入相邻范围，范围不重叠。源文件变化应重新读取并处理受影响要求，不能只改哈希消除告警。
+实际填写 `sources.json` 时保留脚本产生的源文件哈希、原生 `text` 及 `text_sha256`。原生项目以 `text.splitlines()`、OCR 项目以 `sources.page_working_text(page).splitlines()` 的 1 起算行号登记覆盖，空行也要纳入相邻范围，范围不重叠。原生文字及原始 OCR 文字不得手改；有据 OCR 修正按上节登记。源文件变化应重新读取并处理受影响要求，不能只改哈希消除告警。
 
 - 顶层 `scope`：`status: "confirmed"`、本次控制范围 `basis` 和实际 `missing`。来源明确可直接按事实填写；未确认的外部公告或附件不能伪称齐全。
 - 每份 `sources[]`：核对 `version`、`role`、`required`。不是当前必要采购来源时填写 `exclusion_basis` 说明用途及排除理由，不以设置非必要绕过真实缺失。
